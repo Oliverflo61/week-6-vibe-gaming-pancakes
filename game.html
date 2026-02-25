@@ -79,7 +79,10 @@
                     height: 64,
                     speed: 5,
                     image: null,
-                    imageLoaded: false
+                    imageLoaded: false,
+                    lives: 8,
+                    shielded: false,
+                    shieldTimer: 0
                 };
                 
                 // Input handling
@@ -100,6 +103,15 @@
                 this.ringSpawnDelay = 3000; // 3 seconds
                 this.lastRingSpawn = 0;
                 this.ringsSpawned = 0;
+                
+                // Power-ups
+                this.powerUps = [];
+                this.powerUpSpawnChance = 0.01; // 1% chance when spawning rings
+                
+                // Game modifiers
+                this.slowTimer = 0;
+                this.slowMultiplier = 1;
+                this.slowDuration = 8000; // 8 seconds when power-up collected
                 
                 this.init();
             }
@@ -164,11 +176,32 @@
             update() {
                 if (this.gameState === 'gameOver') return;
                 
+                // Update shield timer
+                if (this.player.shielded) {
+                    this.player.shieldTimer--;
+                    if (this.player.shieldTimer <= 0) {
+                        this.player.shielded = false;
+                    }
+                }
+                
+                // Update slow effect
+                if (this.slowTimer > 0) {
+                    this.slowTimer--;
+                    this.slowMultiplier = 0.5; // Slow to half speed
+                } else {
+                    this.slowMultiplier = 1;
+                }
+                
                 // Spawn rings every 3 seconds
                 const currentTime = Date.now();
                 if (this.ringsSpawned < 3 && currentTime - this.gameStartTime > this.ringSpawnDelay * (this.ringsSpawned + 1)) {
                     this.spawnRing();
                     this.ringsSpawned++;
+                    
+                    // Chance to spawn power-up
+                    if (Math.random() < this.powerUpSpawnChance) {
+                        this.spawnPowerUp();
+                    }
                 }
                 
                 // Handle movement
@@ -192,8 +225,14 @@
                 // Update rings
                 this.updateRings();
                 
+                // Update power-ups
+                this.updatePowerUps();
+                
                 // Check collisions
                 this.checkCollisions();
+                
+                // Check power-up collisions
+                this.checkPowerUpCollisions();
             }
             
             draw() {
@@ -206,6 +245,9 @@
                 
                 // Draw rings
                 this.drawRings();
+                
+                // Draw power-ups
+                this.drawPowerUps();
                 
                 // Draw player
                 this.drawPlayer();
@@ -220,19 +262,28 @@
             }
             
             spawnRing() {
+                // Vary the size of rings - small, medium, large
+                const sizeVariations = [
+                    { radius: 20, speedMultiplier: 1.2 },
+                    { radius: 30, speedMultiplier: 1.0 },
+                    { radius: 40, speedMultiplier: 0.8 }
+                ];
+                
+                const sizeChoice = sizeVariations[Math.floor(Math.random() * sizeVariations.length)];
+                
                 const ring = {
-                    x: Math.random() * (this.gameWidth - 60),
-                    y: Math.random() * (this.gameHeight - 60),
-                    radius: 30,
-                    speed: 8 + (this.ringsSpawned * 2), // Ring 1: 8, Ring 2: 10, Ring 3: 12
-                    dx: (Math.random() - 0.5) * 2, // Random direction
+                    x: Math.random() * (this.gameWidth - sizeChoice.radius * 2),
+                    y: Math.random() * (this.gameHeight - sizeChoice.radius * 2),
+                    radius: sizeChoice.radius,
+                    speed: (8 + (this.ringsSpawned * 2)) * sizeChoice.speedMultiplier,
+                    dx: (Math.random() - 0.5) * 2,
                     dy: (Math.random() - 0.5) * 2
                 };
                 
                 // Normalize direction vector
                 const length = Math.sqrt(ring.dx * ring.dx + ring.dy * ring.dy);
-                ring.dx = (ring.dx / length) * ring.speed;
-                ring.dy = (ring.dy / length) * ring.speed;
+                ring.dx = (ring.dx / length) * ring.speed * this.slowMultiplier;
+                ring.dy = (ring.dy / length) * ring.speed * this.slowMultiplier;
                 
                 this.rings.push(ring);
             }
@@ -247,6 +298,10 @@
                 
                 // Update ring positions
                 for (let ring of this.rings) {
+                    // Apply slow multiplier to current velocity
+                    ring.dx *= this.slowMultiplier;
+                    ring.dy *= this.slowMultiplier;
+                    
                     // Move ring
                     ring.x += ring.dx;
                     ring.y += ring.dy;
@@ -309,28 +364,125 @@
                 const playerCenterY = this.player.y + this.player.height / 2;
                 const playerRadius = Math.min(this.player.width, this.player.height) / 2;
                 
-                for (let ring of this.rings) {
+                for (let i = 0; i < this.rings.length; i++) {
+                    const ring = this.rings[i];
                     const distance = Math.sqrt(
                         Math.pow(playerCenterX - ring.x, 2) + 
                         Math.pow(playerCenterY - ring.y, 2)
                     );
                     
                     if (distance < playerRadius + ring.radius) {
-                        this.gameState = 'gameOver';
-                        this.gameEndTime = Date.now();
-                        return;
+                        if (this.player.shielded) {
+                            // Shield absorbs the hit
+                            this.player.shielded = false;
+                        } else {
+                            // Lose a life
+                            this.player.lives--;
+                            // Activate shield for 3 seconds (180 frames)
+                            this.player.shielded = true;
+                            this.player.shieldTimer = 180;
+                            
+                            if (this.player.lives <= 0) {
+                                this.gameState = 'gameOver';
+                                this.gameEndTime = Date.now();
+                                return;
+                            }
+                        }
+                        // Remove the ring after contact
+                        this.rings.splice(i, 1);
+                        i--;
+                    }
+                }
+            }
+            
+            spawnPowerUp() {
+                const powerUp = {
+                    x: Math.random() * (this.gameWidth - 40),
+                    y: Math.random() * (this.gameHeight - 40),
+                    width: 40,
+                    height: 40,
+                    type: 'slow'
+                };
+                this.powerUps.push(powerUp);
+            }
+            
+            updatePowerUps() {
+                // Power-ups are stationary, just need to remove from level
+                // Nothing to update for now
+            }
+            
+            checkPowerUpCollisions() {
+                const playerCenterX = this.player.x + this.player.width / 2;
+                const playerCenterY = this.player.y + this.player.height / 2;
+                const playerRadius = Math.min(this.player.width, this.player.height) / 2;
+                
+                for (let i = 0; i < this.powerUps.length; i++) {
+                    const powerUp = this.powerUps[i];
+                    const powerUpCenterX = powerUp.x + powerUp.width / 2;
+                    const powerUpCenterY = powerUp.y + powerUp.height / 2;
+                    const powerUpRadius = powerUp.width / 2;
+                    
+                    const distance = Math.sqrt(
+                        Math.pow(playerCenterX - powerUpCenterX, 2) + 
+                        Math.pow(playerCenterY - powerUpCenterY, 2)
+                    );
+                    
+                    if (distance < playerRadius + powerUpRadius) {
+                        if (powerUp.type === 'slow') {
+                            // Activate slow effect for all circles
+                            this.slowTimer = this.slowDuration / 16; // Divide by ~16 for frame timing
+                        }
+                        // Remove collected power-up
+                        this.powerUps.splice(i, 1);
+                        i--;
                     }
                 }
             }
             
             drawRings() {
-                this.ctx.strokeStyle = '#ff0000';
-                this.ctx.lineWidth = 4;
-                
                 for (let ring of this.rings) {
+                    // Different colors for different sizes
+                    if (ring.radius === 20) {
+                        this.ctx.strokeStyle = '#00ff00'; // Green for small
+                    } else if (ring.radius === 30) {
+                        this.ctx.strokeStyle = '#ff0000'; // Red for medium
+                    } else {
+                        this.ctx.strokeStyle = '#ff00ff'; // Magenta for large
+                    }
+                    
+                    this.ctx.lineWidth = 4;
                     this.ctx.beginPath();
                     this.ctx.arc(ring.x, ring.y, ring.radius, 0, Math.PI * 2);
                     this.ctx.stroke();
+                }
+            }
+            
+            drawPowerUps() {
+                this.ctx.fillStyle = 'rgba(255, 215, 0, 0.8)'; // Gold color
+                this.ctx.strokeStyle = '#FFD700';
+                this.ctx.lineWidth = 2;
+                
+                for (let powerUp of this.powerUps) {
+                    // Draw circular power-up with pulsing effect
+                    const pulseSize = Math.sin(Date.now() / 300) * 3 + 20;
+                    
+                    this.ctx.beginPath();
+                    this.ctx.arc(
+                        powerUp.x + powerUp.width / 2,
+                        powerUp.y + powerUp.height / 2,
+                        pulseSize,
+                        0,
+                        Math.PI * 2
+                    );
+                    this.ctx.fill();
+                    this.ctx.stroke();
+                    
+                    // Draw "S" for slow effect
+                    this.ctx.fillStyle = '#000';
+                    this.ctx.font = 'bold 16px Arial';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.textBaseline = 'middle';
+                    this.ctx.fillText('S', powerUp.x + powerUp.width / 2, powerUp.y + powerUp.height / 2);
                 }
             }
             
@@ -374,21 +526,44 @@
                     this.ctx.fillRect(this.player.x + 15, this.player.y + 15, 8, 8);
                     this.ctx.fillRect(this.player.x + 35, this.player.y + 15, 8, 8);
                     
+                    // Eyepatch on left eye
+                    this.ctx.fillStyle = '#000';
+                    this.ctx.beginPath();
+                    this.ctx.arc(this.player.x + 19, this.player.y + 19, 6, 0, Math.PI * 2);
+                    this.ctx.fill();
+                    // Eyepatch strap
+                    this.ctx.strokeStyle = '#000';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(this.player.x + 13, this.player.y + 25);
+                    this.ctx.lineTo(this.player.x + 25, this.player.y + 25);
+                    this.ctx.stroke();
+                    
                     // Nose
                     this.ctx.fillStyle = '#FF69B4';
                     this.ctx.fillRect(this.player.x + 28, this.player.y + 30, 6, 4);
+                }
+                
+                // Draw shield if active
+                if (this.player.shielded) {
+                    const centerX = this.player.x + this.player.width / 2;
+                    const centerY = this.player.y + this.player.height / 2;
+                    const shieldRadius = 45;
                     
-                    // Label
-                    this.ctx.fillStyle = '#fff';
-                    this.ctx.font = '12px Arial';
-                    this.ctx.textAlign = 'center';
+                    // Pulsing shield effect
+                    const pulseIntensity = Math.sin(Date.now() / 200) * 0.3 + 0.7;
+                    this.ctx.strokeStyle = `rgba(0, 255, 255, ${pulseIntensity})`;
+                    this.ctx.lineWidth = 3;
+                    this.ctx.beginPath();
+                    this.ctx.arc(centerX, centerY, shieldRadius, 0, Math.PI * 2);
+                    this.ctx.stroke();
                 }
             }
             
             drawUI() {
                 // Draw position indicator
                 this.ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-                this.ctx.fillRect(10, 10, 200, 80);
+                this.ctx.fillRect(10, 10, 200, 120);
                 
                 this.ctx.fillStyle = '#fff';
                 this.ctx.font = '14px Arial';
@@ -396,6 +571,21 @@
                 this.ctx.fillText(`Position: ${Math.round(this.player.x)}, ${Math.round(this.player.y)}`, 20, 30);
                 this.ctx.fillText(`Speed: ${this.player.speed}`, 20, 50);
                 this.ctx.fillText(`Rings: ${this.rings.length}/3`, 20, 70);
+                
+                // Draw lives
+                this.ctx.fillText(`Lives: ${this.player.lives}`, 20, 90);
+                
+                // Draw shield status
+                if (this.player.shielded) {
+                    this.ctx.fillStyle = '#00ffff';
+                    this.ctx.fillText('SHIELD ACTIVE', 20, 110);
+                }
+                
+                // Draw slow effect status
+                if (this.slowTimer > 0) {
+                    this.ctx.fillStyle = '#ffff00';
+                    this.ctx.fillText('SLOW MODE ACTIVE', 20, 130);
+                }
                 
                 // Draw survival time
                 const currentTime = this.gameState === 'gameOver' ? this.gameEndTime : Date.now();
