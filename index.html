@@ -54,7 +54,9 @@
 </head>
 <body>
     <div class="game-container">
-        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <canvas id="gameCanvas" width="1000" height="1000"></canvas>
+        <!-- background music (may be blocked until user interacts) -->
+        <audio id="bgMusic" src="https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" loop></audio>
         <div class="controls">
             <h3>Controls</h3>
             <p>Use <span class="key">W</span><span class="key">A</span><span class="key">S</span><span class="key">D</span> keys to move the weasel</p>
@@ -97,6 +99,10 @@
                 this.gameState = 'playing'; // 'playing' or 'gameOver'
                 this.gameStartTime = Date.now();
                 this.gameEndTime = null;
+
+                // Audio context for effects
+                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                this.bgMusic = null; // will be assigned in init
                 
                 // Rings
                 this.rings = [];
@@ -127,6 +133,14 @@
                     this.player.imageLoaded = false;
                 };
                 this.player.image.src = 'weasel.png';
+
+                // background music element
+                this.bgMusic = document.getElementById('bgMusic');
+                if (this.bgMusic) {
+                    this.bgMusic.volume = 0.2;
+                    // attempt to play (may require user interaction)
+                    this.bgMusic.play().catch(e => console.log('bgMusic play prevented', e));
+                }
                 
                 // Set up event listeners
                 this.setupInputHandlers();
@@ -137,6 +151,10 @@
             
             setupInputHandlers() {
                 document.addEventListener('keydown', (e) => {
+                    // resume audio context on first input (browsers often suspend it)
+                    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+                        this.audioCtx.resume();
+                    }
                     switch(e.key.toLowerCase()) {
                         case 'w':
                             this.keys.w = true;
@@ -377,6 +395,7 @@
                             this.player.shielded = false;
                         } else {
                             // Lose a life
+                            this.playBeep(200, 0.1);
                             this.player.lives--;
                             // Activate shield for 3 seconds (180 frames)
                             this.player.shielded = true;
@@ -385,6 +404,8 @@
                             if (this.player.lives <= 0) {
                                 this.gameState = 'gameOver';
                                 this.gameEndTime = Date.now();
+                                // play game over sound
+                                this.playBeep(100, 0.4);
                                 return;
                             }
                         }
@@ -431,12 +452,26 @@
                         if (powerUp.type === 'slow') {
                             // Activate slow effect for all circles
                             this.slowTimer = this.slowDuration / 16; // Divide by ~16 for frame timing
+                            // play power-up sound
+                            this.playBeep(600, 0.15);
                         }
                         // Remove collected power-up
                         this.powerUps.splice(i, 1);
                         i--;
                     }
                 }
+            }
+
+            // simple beep using Web Audio API
+            playBeep(frequency, duration = 0.1) {
+                if (!this.audioCtx) return;
+                const osc = this.audioCtx.createOscillator();
+                const gain = this.audioCtx.createGain();
+                osc.frequency.value = frequency;
+                osc.connect(gain);
+                gain.connect(this.audioCtx.destination);
+                osc.start();
+                osc.stop(this.audioCtx.currentTime + duration);
             }
             
             drawRings() {
